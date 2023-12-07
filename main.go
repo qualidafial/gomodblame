@@ -12,28 +12,56 @@ import (
 
 	"github.com/qualidafial/gomodblame/internal/graph"
 	"github.com/qualidafial/gomodblame/internal/multimap"
+	"golang.org/x/exp/slices"
 )
 
+var (
+	from       string
+	to         string
+	until      string
+	cyclic     bool
+	noVersions bool
+	outFile    string
+)
+
+const (
+	wordWrapWidth = 60
+)
+
+func init() {
+	log.SetFlags(0)
+	log.SetPrefix("gomodblame: ")
+
+	flag.StringVar(&from, "from", "", wordWrap("Only the subgraph depended on by this module. May be a substring of the module name."))
+	flag.StringVar(&to, "to", "", wordWrap("Only the subgraph that depends on this module. May be a substring of the module name."))
+	flag.StringVar(&until, "until", "", wordWrap("Only the subgraph from the root nodes until this module is first encountered. May be a substring of the module name."))
+	flag.BoolVar(&cyclic, "cyclic", false, wordWrap("Only the subgraph of cyclic module dependencies."))
+	flag.BoolVar(&noVersions, "no-versions", false, wordWrap("Remove versions from module names."))
+	flag.StringVar(&outFile, "o", "", wordWrap("Write output to this file instead of stdout."))
+	flag.Usage = usage
+}
+
+func wordWrap(s string) string {
+	var lines []string
+	for len(s) > wordWrapWidth {
+		i := strings.LastIndex(s[:wordWrapWidth], " ")
+		if i == -1 {
+			i = wordWrapWidth
+		}
+		lines = append(lines, s[:i])
+		s = s[i+1:]
+	}
+	lines = append(lines, s)
+	return strings.Join(lines, "\n")
+}
+
 func usage() {
-	_, _ = fmt.Fprintf(os.Stderr, "Usage: %s [-from <module>] [-to <module>] [-ignore-versions] [-o <filename>]\n", os.Args[0])
+	_, _ = fmt.Fprintf(os.Stderr, "Usage: %s [-from module] [-to module] [-until module] [-cycles-only] [-ignore-versions] [-o filename]\n", os.Args[0])
+	flag.PrintDefaults()
 	os.Exit(2)
 }
 
 func main() {
-	log.SetFlags(0)
-	log.SetPrefix("gomodblame: ")
-
-	var from, to, until string
-	var ignoreVersions, cyclesOnly bool
-	var outFile string
-
-	flag.StringVar(&from, "from", "", "include the subgraph depended on by this module")
-	flag.StringVar(&to, "to", "", "include the subgraph that depends on this module")
-	flag.StringVar(&until, "until", "", "include the subgraph from the root nodes until this module is encountered")
-	flag.BoolVar(&ignoreVersions, "ignore-versions", false, "ignore module versions")
-	flag.BoolVar(&cyclesOnly, "cycles-only", false, "only include modules that are part of a cycle")
-	flag.StringVar(&outFile, "o", "", "write output to this file instead of stdout")
-	flag.Usage = usage
 	flag.Parse()
 	if flag.NArg() != 0 {
 		usage()
@@ -68,7 +96,7 @@ func main() {
 		})
 		log.Printf("Subgraph contains %d nodes, %d edges", graph.NodeCount(), graph.EdgeCount())
 	}
-	if cyclesOnly {
+	if cyclic {
 		log.Print("Filtering to modules in circular dependencies")
 		for {
 			if from, ok := graph.FindRootNode(); ok {
@@ -87,7 +115,7 @@ func main() {
 		}
 		log.Printf("Subgraph contains %d nodes, %d edges", graph.NodeCount(), graph.EdgeCount())
 	}
-	if ignoreVersions {
+	if noVersions {
 		log.Print("Removing versions from modules")
 		graph = graph.Map(func(module string) string {
 			module, _, _ = strings.Cut(module, "@")
@@ -110,19 +138,23 @@ func main() {
 	edgesByTo := multimap.Multimap[string, string]{}
 
 	for graph.NodeCount() > 0 {
-		module, ok := graph.FindRootNode()
-		if !ok {
-			module, _ = graph.AnyNode()
+		modules := graph.RootNodes()
+		if len(modules) > 0 {
+			nodes = append(nodes, modules...)
 		} else {
-			nodes = append(nodes, module)
+			module, _ := graph.AnyNode()
+			modules = append(modules, module)
 		}
+		slices.Sort(modules)
 
-		for _, dependency := range graph.EdgesFrom(module) {
-			edgesByTo.Add(dependency, module)
-			graph.Remove(module, dependency)
-			if !graph.HasEdgesTo(dependency) && !graph.HasEdgesFrom(dependency) {
-				// leaf node, output it immediately
-				nodes = append(nodes, dependency)
+		for _, module := range modules {
+			for _, dependency := range graph.EdgesFrom(module) {
+				edgesByTo.Add(dependency, module)
+				graph.Remove(module, dependency)
+				if !graph.HasEdgesTo(dependency) && !graph.HasEdgesFrom(dependency) {
+					// leaf node, output it immediately
+					nodes = append(nodes, dependency)
+				}
 			}
 		}
 	}
