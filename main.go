@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/qualidafial/gomodblame/internal/graph"
 	"github.com/qualidafial/gomodblame/internal/multimap"
+	flag "github.com/spf13/pflag"
 	"golang.org/x/exp/slices"
 )
 
@@ -32,12 +32,12 @@ func init() {
 	log.SetFlags(0)
 	log.SetPrefix("gomodblame: ")
 
-	flag.StringVar(&from, "from", "", wordWrap("Only the subgraph depended on by this module. May be a substring of the module name."))
-	flag.StringVar(&to, "to", "", wordWrap("Only the subgraph that depends on this module. May be a substring of the module name."))
-	flag.StringVar(&until, "until", "", wordWrap("Only the subgraph from the root nodes until this module is first encountered. May be a substring of the module name."))
-	flag.BoolVar(&cyclic, "cyclic", false, wordWrap("Only the subgraph of cyclic module dependencies."))
+	flag.StringVarP(&from, "from", "f", "", wordWrap("Only the subgraph depended on by this module. May be a substring of the module name."))
+	flag.StringVarP(&to, "to", "t", "", wordWrap("Only the subgraph that depends on this module. May be a substring of the module name."))
+	flag.StringVarP(&until, "until", "u", "", wordWrap("Only the subgraph from the root nodes until this module is first encountered. May be a substring of the module name."))
+	flag.BoolVarP(&cyclic, "cyclic", "c", false, wordWrap("Only the subgraph of cyclic module dependencies."))
 	flag.BoolVar(&noVersions, "no-versions", false, wordWrap("Remove versions from module names."))
-	flag.StringVar(&outFile, "o", "", wordWrap("Write output to this file instead of stdout."))
+	flag.StringVarP(&outFile, "output", "o", "", wordWrap("Write output to this file instead of stdout."))
 	flag.Usage = usage
 }
 
@@ -56,7 +56,7 @@ func wordWrap(s string) string {
 }
 
 func usage() {
-	_, _ = fmt.Fprintf(os.Stderr, "Usage: %s [-from module] [-to module] [-until module] [-cycles-only] [-ignore-versions] [-o filename]\n", os.Args[0])
+	_, _ = fmt.Fprintf(os.Stderr, "Outputs a Go module dependency graph in Mermaid format\n\nUsage: %s [flags]\n\n", os.Args[0])
 	flag.PrintDefaults()
 	os.Exit(2)
 }
