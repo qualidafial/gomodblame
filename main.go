@@ -15,7 +15,7 @@ import (
 )
 
 func usage() {
-	_, _ = fmt.Fprintf(os.Stderr, "Usage: %s [-from <module>] [-to <module>]\n", os.Args[0])
+	_, _ = fmt.Fprintf(os.Stderr, "Usage: %s [-from <module>] [-to <module>] [-ignore-versions] [-o <filename>]\n", os.Args[0])
 	os.Exit(2)
 }
 
@@ -23,10 +23,15 @@ func main() {
 	log.SetFlags(0)
 	log.SetPrefix("gomodblame: ")
 
-	var from, to, outFile string
+	var from, to, until string
+	var ignoreVersions, cyclesOnly bool
+	var outFile string
 
-	flag.StringVar(&from, "from", "", "only include modules depended on by this module")
-	flag.StringVar(&to, "to", "", "only include modules that depend on this module")
+	flag.StringVar(&from, "from", "", "include the subgraph depended on by this module")
+	flag.StringVar(&to, "to", "", "include the subgraph that depends on this module")
+	flag.StringVar(&until, "until", "", "include the subgraph from the root nodes until this module is encountered")
+	flag.BoolVar(&ignoreVersions, "ignore-versions", false, "ignore module versions")
+	flag.BoolVar(&cyclesOnly, "cycles-only", false, "only include modules that are part of a cycle")
 	flag.StringVar(&outFile, "o", "", "write output to this file instead of stdout")
 	flag.Usage = usage
 	flag.Parse()
@@ -40,21 +45,55 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("Dependency graph contains %d edges", graph.Size())
+	log.Printf("Dependency graph contains %d nodes, %d edges", graph.NodeCount(), graph.EdgeCount())
 
 	if from != "" {
 		log.Printf("Filtering to modules depended on by %q", from)
 		graph = graph.SubgraphFrom(func(module string) bool {
 			return strings.Contains(module, from)
 		})
-		log.Printf("Subgraph contains %d edges", graph.Size())
+		log.Printf("Subgraph contains %d nodes, %d edges", graph.NodeCount(), graph.EdgeCount())
 	}
 	if to != "" {
 		log.Printf("Filtering to modules that depend on %q", to)
 		graph = graph.SubgraphTo(func(module string) bool {
 			return strings.Contains(module, to)
 		})
-		log.Printf("Subgraph contains %d edges", graph.Size())
+		log.Printf("Subgraph contains %d nodes, %d edges", graph.NodeCount(), graph.EdgeCount())
+	}
+	if until != "" {
+		log.Printf("Filtering to modules that depend on the first %q", until)
+		graph = graph.SubgraphUntil(func(module string) bool {
+			return strings.Contains(module, until)
+		})
+		log.Printf("Subgraph contains %d nodes, %d edges", graph.NodeCount(), graph.EdgeCount())
+	}
+	if cyclesOnly {
+		log.Print("Filtering to modules in circular dependencies")
+		for {
+			if from, ok := graph.FindRootNode(); ok {
+				for _, to := range graph.EdgesFrom(from) {
+					graph.Remove(from, to)
+				}
+				continue
+			}
+			if to, ok := graph.FindLeafNode(); ok {
+				for _, from := range graph.EdgesTo(to) {
+					graph.Remove(from, to)
+				}
+				continue
+			}
+			break
+		}
+		log.Printf("Subgraph contains %d nodes, %d edges", graph.NodeCount(), graph.EdgeCount())
+	}
+	if ignoreVersions {
+		log.Print("Removing versions from modules")
+		graph = graph.Map(func(module string) string {
+			module, _, _ = strings.Cut(module, "@")
+			return module
+		})
+		log.Printf("Graph without versions contains %d nodes, %d edges", graph.NodeCount(), graph.EdgeCount())
 	}
 
 	log.Println("Organizing graph nodes and edges...")
@@ -70,13 +109,10 @@ func main() {
 	// the layout to flow in one direction.
 	edgesByTo := multimap.Multimap[string, string]{}
 
-	for graph.Size() > 0 {
-		module, ok := graph.FindFromRoot()
+	for graph.NodeCount() > 0 {
+		module, ok := graph.FindRootNode()
 		if !ok {
-			log.Printf("No root modules left, choosing one at random. %d edges remaining", graph.Size())
-			module, ok = graph.FindFrom(func(module string) bool {
-				return true
-			})
+			module, _ = graph.AnyNode()
 		} else {
 			nodes = append(nodes, module)
 		}
